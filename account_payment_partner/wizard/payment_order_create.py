@@ -31,7 +31,14 @@ class PaymentOrderCreate(models.TransientModel):
         res = super(PaymentOrderCreate, self).extend_payment_order_domain(
             payment_order, domain)
         # Monkey patch for fixing problem with the core search function
-        # when args is ('invoice', '=', False).
+        # when args has ('invoice', '=', False), referred in the issue #4857
+        # (https://github.com/odoo/odoo/issues/4857)
+        #
+        # Original domain:
+        # domain += ['|', '|',
+        #            ('invoice', '=', False),
+        #            ('invoice.payment_mode_id', '=', False),
+        #            ('invoice.payment_mode_id', '=', payment_order.mode.id)]
         self.env.cr.execute(
             'SELECT l.id '
             'FROM account_move_line l '
