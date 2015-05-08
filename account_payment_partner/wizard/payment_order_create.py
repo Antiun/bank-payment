@@ -40,11 +40,15 @@ class PaymentOrderCreate(models.TransientModel):
         #            ('invoice.payment_mode_id', '=', False),
         #            ('invoice.payment_mode_id', '=', payment_order.mode.id)]
         self.env.cr.execute(
-            'SELECT l.id '
-            'FROM account_move_line l '
-            'LEFT OUTER JOIN account_invoice i '
-            'ON l.move_id = i.move_id '
-            'WHERE i.id IS NULL')
+            "SELECT l.id "
+            "FROM account_move_line l "
+            "LEFT OUTER JOIN account_invoice i "
+            "ON l.move_id = i.move_id "
+            "INNER JOIN account_account a "
+            "ON a.id = l.account_id "
+            "WHERE i.id IS NULL"
+            "  AND l.reconcile_id IS NULL"
+            "  AND a.type in ('receivable', 'payable')")
         ids = [x[0] for x in self.env.cr.fetchall()]
         domain += ['|',
                    ('id', 'in', ids),
