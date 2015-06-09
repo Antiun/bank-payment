@@ -98,20 +98,6 @@ class BankingExportPain(orm.AbstractModel):
             value = value[0:max_size]
         return value
 
-    def _prepare_export_sepa(
-            self, cr, uid, total_amount, transactions_count, xml_string,
-            gen_args, context=None):
-        return {
-            'batch_booking': gen_args['sepa_export'].batch_booking,
-            'charge_bearer': gen_args['sepa_export'].charge_bearer,
-            'total_amount': total_amount,
-            'nb_transactions': transactions_count,
-            'file': base64.encodestring(xml_string),
-            'payment_order_ids': [(
-                6, 0, [x.id for x in gen_args['sepa_export'].payment_order_ids]
-            )],
-        }
-
     def _validate_xml(self, cr, uid, xml_string, gen_args, context=None):
         xsd_etree_obj = etree.parse(
             tools.file_open(gen_args['pain_xsd_file']))
@@ -147,15 +133,18 @@ class BankingExportPain(orm.AbstractModel):
         logger.debug(xml_string)
         self._validate_xml(cr, uid, xml_string, gen_args, context=context)
 
-        file_id = gen_args['file_obj'].create(
-            cr, uid, self._prepare_export_sepa(
-                cr, uid, total_amount, transactions_count,
-                xml_string, gen_args, context=context),
-            context=context)
+        order_ref = []
+        for order in gen_args['sepa_export'].payment_order_ids:
+            if order.reference:
+                order_ref.append(order.reference.replace('/', '-'))
+        filename = '%s%s.xml' % (gen_args['file_prefix'], '-'.join(order_ref))
 
         self.write(
             cr, uid, ids, {
-                'file_id': file_id,
+                'nb_transactions': transactions_count,
+                'total_amount': total_amount,
+                'filename': filename,
+                'file': base64.encodestring(xml_string),
                 'state': 'finish',
             }, context=context)
 
@@ -257,6 +246,11 @@ class BankingExportPain(orm.AbstractModel):
         requested_date_2_17.text = requested_date
         return payment_info_2_0, nb_of_transactions_2_4, control_sum_2_5
 
+    def _must_have_initiating_party(self, cr, uid, gen_args, context=None):
+        '''This method is designed to be inherited in localization modules for
+        countries in which the initiating party is required'''
+        return False
+
     def generate_initiating_party_block(
             self, cr, uid, parent_node, gen_args, context=None):
         my_company_name = self._prepare_field(
@@ -267,26 +261,29 @@ class BankingExportPain(orm.AbstractModel):
         initiating_party_1_8 = etree.SubElement(parent_node, 'InitgPty')
         initiating_party_name = etree.SubElement(initiating_party_1_8, 'Nm')
         initiating_party_name.text = my_company_name
-        initiating_party_identifier = self.pool['res.company'].\
-            _get_initiating_party_identifier(
-                cr, uid,
-                gen_args['sepa_export'].payment_order_ids[0].company_id.id,
-                context=context)
-        initiating_party_issuer = gen_args['sepa_export'].\
-            payment_order_ids[0].company_id.initiating_party_issuer
-        if not initiating_party_identifier or not initiating_party_issuer:
+        initiating_party_identifier =\
+            gen_args['sepa_export'].payment_order_ids[0].company_id.\
+            initiating_party_identifier
+        initiating_party_issuer =\
+            gen_args['sepa_export'].payment_order_ids[0].company_id.\
+            initiating_party_issuer
+        if initiating_party_identifier and initiating_party_issuer:
+            iniparty_id = etree.SubElement(initiating_party_1_8, 'Id')
+            iniparty_org_id = etree.SubElement(iniparty_id, 'OrgId')
+            iniparty_org_other = etree.SubElement(iniparty_org_id, 'Othr')
+            iniparty_org_other_id = etree.SubElement(iniparty_org_other, 'Id')
+            iniparty_org_other_id.text = initiating_party_identifier
+            iniparty_org_other_issuer = etree.SubElement(
+                iniparty_org_other, 'Issr')
+            iniparty_org_other_issuer.text = initiating_party_issuer
+        elif self._must_have_initiating_party(cr, uid, gen_args,
+                                              context=context):
             raise orm.except_orm(
-                _("Error"),
-                _("You must fill initiating party identifier and issuer in "
-                  "the company form."))
-        iniparty_id = etree.SubElement(initiating_party_1_8, 'Id')
-        iniparty_org_id = etree.SubElement(iniparty_id, 'OrgId')
-        iniparty_org_other = etree.SubElement(iniparty_org_id, 'Othr')
-        iniparty_org_other_id = etree.SubElement(iniparty_org_other, 'Id')
-        iniparty_org_other_id.text = initiating_party_identifier
-        iniparty_org_other_issuer = etree.SubElement(
-            iniparty_org_other, 'Issr')
-        iniparty_org_other_issuer.text = initiating_party_issuer
+                _('Error:'),
+                _("Missing 'Initiating Party Issuer' and/or "
+                    "'Initiating Party Identifier' for the company '%s'. "
+                    "Both fields must have a value.")
+                % gen_args['sepa_export'].payment_order_ids[0].company_id.name)
         return True
 
     def generate_party_agent(
