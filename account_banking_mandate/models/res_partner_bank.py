@@ -21,7 +21,7 @@
 #
 ##############################################################################
 
-from openerp import models, fields
+from openerp import models, fields, api
 
 
 class ResPartnerBank(models.Model):
@@ -32,3 +32,16 @@ class ResPartnerBank(models.Model):
         string='Direct Debit Mandates',
         help='Banking mandates represents an authorization that the bank '
              'account owner gives to a company for a specific operation')
+
+    acc_masked = fields.Char(
+        string='Masked account', store=True, readonly=True,
+        compute='_compute_acc_masked')
+
+    @api.depends('acc_number')
+    def _compute_acc_masked(self):
+        for bank in self:
+            acc_number = bank.acc_number
+            if len(acc_number) > 4:
+                self.acc_masked = acc_number[-4:].rjust(len(acc_number), "*")
+            else:
+                self.acc_masked = False
